@@ -20,7 +20,7 @@ class WhatConfigParser(SafeConfigParser):
 		for format, bitrate in [(r.format, r.bitrate) for r in rankings]:
 			value = format + "|" + re.sub("%", "%%", bitrate)
 			self.set("format", str(rank), value)
-			rank = rank + 100
+			rank += 100
 			
 	# Return ranking as list of tuples (format, bitrate, rank)
 	def getRankingRules(self):

@@ -1,12 +1,18 @@
 #!/usr/bin/python
-from Tkinter import *
-
 import pickle, sqlite3, time
 import tkMessageBox, tkFileDialog
 import mediamonkey, what
 
+from Tkinter import *
 from whatconfig import WhatConfigParser
 from rankingselector import *
+
+# PIL would be nice, but we can manage without
+try:
+	from PIL import Image, ImageTk
+	usePIL = True
+except ImportError:
+	usePIL = False
 
 class WhatBotGui(Tk):
 	lossyformats = sorted(["M4A", "AAC", "MP3", "MPC", "OGG", "WMA"])
@@ -22,6 +28,7 @@ class WhatBotGui(Tk):
 		filemenu = Menu(menu, tearoff=0)
 		menu.add_cascade(label="File", menu=filemenu)
 		filemenu.add_command(label="Saved Search...", command=self.loadRemoteSearch)
+		filemenu.add_command(label="Missing Art...", command=lambda: MissingArt(self, mm.missingArt()))
 		filemenu.add_command(label="Options...", command=self.changeOptions)
 		filemenu.add_separator()
 		filemenu.add_command(label="Exit", command=exit)
@@ -60,7 +67,7 @@ class WhatBotGui(Tk):
 		self.searchlimit.grid(row=2, column=1)
 		
 		self.gobutton = Button(self, text="Run search...", command=self.runLocalSearch, state=DISABLED)
-		self.gobutton.grid(row=3, column=1, sticky="NSEW")
+		self.gobutton.grid(row=3, column=0, columnspan=2, pady=5)
 		
 		self.statusbar = StatusBar(self)
 		self.statusbar.grid(row=4, column=0, columnspan=2, sticky="EW")
@@ -127,7 +134,7 @@ class WhatBotGui(Tk):
 				self.statusbar.set("No MediaMonkey database, please review options")
 		else:
 			self.statusbar.set("Cannot log in to what, please review options")
-
+			
 class ScrollGridSelect(Frame):
 	# headings is a tuple, data must be a list of tuples of the same width as the headings (surprise)
 	# TODO: do some data validation and exception handling, there are a large number of assumptions here
@@ -231,9 +238,9 @@ class RemoteProgress(Toplevel):
 
 	def __init__(self, parent):
 		Toplevel.__init__(self)
+		self.title("Remote activity progress")
 		self.parent = parent
 		self.transient(parent)
-		self.title=("Remote activity progress")
 		
 		l1 = Label(self, text="Messages")
 		l2 = Label(self, text="Progress")
@@ -248,12 +255,9 @@ class RemoteProgress(Toplevel):
 		scrollbar.grid(row=1, column=1, sticky=N+S)
 		l2.grid(row=2, column=0, columnspan=2, sticky=E+W)
 		self.progcanvas.grid(row=3, column=0, columnspan=2)
-		
-	def open(self):
-		self.deinconify()
-		
+
 	def close(self):
-		self.withdraw()
+		self.destroy()
 		
 	def updateProgress(self, ratio):
 		self.progcanvas.delete(ALL)
@@ -269,6 +273,85 @@ class RemoteProgress(Toplevel):
 	
 		self.update()
 
+class ImagePreview(Toplevel):
+	def __init__(self, parent, geometry, width=300, height=300):
+		Toplevel.__init__(self)
+		self.width = width
+		self.height = height
+		self.title("Last image preview")
+		self.parent = parent
+		self.transient(parent)
+		self.preview = Label(self)
+		if not usePIL:
+			self.preview.config(text="PIL not installed, no preview available")
+			self.preview.config(width=35, height=20)
+
+		self.statusbar = StatusBar(self)
+		
+		self.preview.grid(row=0, sticky="NSEW")
+		self.statusbar.grid(row=1, sticky="EW")
+		self.geometry(geometry)
+		self.withdraw()
+
+	def close(self):
+		self.destroy()
+	
+	def changeImage(self, imagefilename):
+		self.statusbar.set(imagefilename)
+		if usePIL:
+			try:
+				self.image = Image.open(imagefilename).resize((self.width, self.height), Image.BICUBIC)
+				self.photo = ImageTk.PhotoImage(self.image)
+				self.preview.config(image=self.photo)
+			except IOError:
+				self.statusbar.set("IOError rendering image")
+			
+		if self.state != NORMAL:
+			self.deiconify()
+		self.update_idletasks()
+		
+class MissingArt(Toplevel):
+	def __init__(self, parent, tuples):
+		Toplevel.__init__(self)
+		self.parent = parent
+		self.tuples = [ (artist, album, mm.fullpath(idfolder)) for artist, album, idfolder in tuples ]
+		parent.withdraw()
+		self.title("Albums missing artwork")
+		
+		self.scrollframe = ScrollGridSelect(self, ("Artist", "Album", "Folder"), (30, 30, 40), 20, self.tuples)
+		backbutton = Button(self, text="Back", command=self.goBackToStart)
+		findbutton = Button(self, text="Find art...", command=self.findArt)
+		
+		self.scrollframe.grid(row=0, column=0, columnspan=2, sticky="EW")
+		backbutton.grid(row=1, column=0)
+		findbutton.grid(row=1, column=1)
+		
+		self.protocol("WM_DELETE_WINDOW", self.goBackToStart)
+		
+	def goBackToStart(self):
+		self.destroy()
+		self.parent.deiconify()
+
+	def findArt(self):
+		try:
+			if len(self.scrollframe.selected) == 0:
+				raise ValueError("Please select something to search for")
+
+			progressbar = RemoteProgress(self)				
+			progressbar.updateProgress(0)
+			preview_geometry = "+%d+%d" % (progressbar.winfo_rootx() + progressbar.winfo_width() + 50, self.parent.winfo_rooty())
+			imagepreview = ImagePreview(self, preview_geometry)
+		
+			whatcd.downloadImages(self.scrollframe.getSelectedData([0, 1, 2]), progressbar, imagepreview)
+			#whatcd.fakeDownloadImages(self.scrollframe.getSelectedData([0, 1, 2]), progressbar, imagepreview)
+
+			tkMessageBox.showinfo("Downloaded art", "MediaMonkey library should be refreshed before a repeat run")
+			imagepreview.close()
+			progressbar.close()
+		except ValueError, v:
+			tkMessageBox.showwarning("Validation failed", str(v))
+	
+		
 class LocalSearchResults(Toplevel):
 	def __init__(self, parent, tuples):
 		Toplevel.__init__(self)

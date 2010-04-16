@@ -22,7 +22,36 @@ select v.albumartist, v.album, s.extension, v.bitrate from
 where s.id = v.id
 and v.bitrate <= %d -- Change this number to alter the threshold at which tracks are considered to be "low bitrate"
 order by v.albumartist, v.album %s"""	
-	
+
+	# Local missing art search
+	MISSING_ART_QUERY = """
+select albumartist, album, idfolder
+from (
+select
+ case
+   when s.albumartist = 'VA' then 'Various Artists'
+   when s.albumartist = 'Various' then 'Various Artists'
+   else s.albumartist
+ end albumartist
+, s.album album, f.id idfolder
+from songs s, folders f
+where s.idfolder = f.id
+and s.album != '' and s.albumartist != ''
+and not exists
+( select * from covers c where c.idsong = s.id ) 
+group by albumartist, album, folder 
+having count(*) >= 3
+) order by albumartist, album"""
+
+	# Collapse folder hierarchy
+	COLLAPSE_FOLDER_QUERY = """
+select m.driveletter, f.folder
+from foldershier h, folders f, medias m
+where f.idmedia = m.idmedia
+and f.id = h.idfolder
+and h.idchildfolder = ?
+order by f.id"""
+
 	# Create the parameter
 	def __init__(self, config):
 		self._dbfile = config.get("mediamonkey", "dbfile")
@@ -52,7 +81,6 @@ order by v.albumartist, v.album %s"""
 			testconn = None
 		
 		return testconn
-		
 
 	def connect(self, dbfile):
 		# destroy existing connection if applicable
@@ -94,17 +122,11 @@ order by v.albumartist, v.album %s"""
 		self.query(sql)
 
 	def fullpath(self, folderid):
-		sql = """select m.driveletter, f.folder
-		from foldershier h, folders f, medias m
-		where f.idmedia = m.idmedia
-		and f.id = h.idfolder
-		and h.idchildfolder = ?
-		order by f.id"""
-		folders = self.conn.execute(sql, (folderid,)).fetchall()
+		folders = self.conn.execute(self.COLLAPSE_FOLDER_QUERY, (folderid,)).fetchall()
 		path=chr(65 + folders[0][0]) + ":"
-		for i in range(1, len(folders)):
-			path = path + '/' + folders[i][1]
-
+		for dummy, folder in folders[1:]:
+			path = path + '/' + folder
+			
 		return path
 
 	def localSearch(self, formats, bitrate, limitrows):
@@ -116,6 +138,9 @@ order by v.albumartist, v.album %s"""
 			limitbind = "limit %d" % limitrows
 	
 		return self.querylist(self.LOW_BITRATE_QUERY % (formatbind, bitrate, limitbind))
+		
+	def missingArt(self):
+		return self.querylist(self.MISSING_ART_QUERY)
 	
 if __name__ == "__main__":
 	print "Simple sqlite3 DAO for MediaMonkey"

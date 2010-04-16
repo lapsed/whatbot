@@ -1,6 +1,6 @@
 #!/usr/bin/python
 import urllib, urllib2, httplib
-import re, traceback, time
+import re, traceback, time, socket
 
 from xml.dom import minidom
 from xml.parsers.expat import ExpatError
@@ -11,25 +11,34 @@ class ResponseBody:
 class WhatBase:
 	# Some utility functions and constants that I am very lazily bunging into a base class
 	_sitename = "what.cd"
-	#_sitename = "foo.bar.site.noexist"
+	
+	def debugMessage(self, message, messagecallback = None):
+		if messagecallback:
+			messagecallback(message)
+		else:
+			print message
 
-	def downloadResource(self, url, path, fname):
+	def downloadResource(self, url, path, fname, messagecallback = None):
 		# Remove characters Windoze doesn't allow in filenames
 		fname = re.sub("[\*\"\/\\\[\]\:\;\|\=\,]", "", fname)
 
 		try:
-			f = urllib2.urlopen(url)
-
-			if f.getcode() == 200:
+			# Do an impression of Firefox to prevent 403 from some image hosts
+			opener = urllib2.build_opener()
+			opener.addheaders = [("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.2.3) Gecko/20100401 Firefox/3.6.3")]
+			response = opener.open(url)
+			
+			if response.getcode() == 200:
 				copy = open(path + "/" + fname, 'wb')
-				copy.write(f.read())
+				copy.write(response.read())
 				copy.close()
 			else:
-				print "ERROR: Unexpected HTTP response code %d downloading %s" % (f.getcode(), url)
+				self.debugMessage("ERROR: Unexpected HTTP response code %d downloading %s" % (response.getcode(), url), messagecallback)
 
-			f.close()
-		except (IOError):
-			print "ERROR: IO exception downloading resource %s" % url
+			response.close()
+		except IOError, io:
+			self.debugMessage("ERROR: IO exception downloading resource %s" % url, messagecallback)
+			self.debugMessage(traceback.format_exc(), messagecallback)
 
 	def bytesFromString(self, sizestr):
 		size = sizestr.split(" ")
@@ -168,18 +177,91 @@ class WhatCD(WhatBase):
 			except (ExpatError):
 				progressbar.message("Parse error dealing with response, dumping debug")
 				self.parser.handleExpatError("Parse error performing advanced search for %s: %s" % advsearch, advresponse \
-					, re.sub(" ", "_", "adv_%s_%s.html" % advsearch))
+					, re.sub(" ", "_", "adv_%s_%s.html" % advsearch), progressbar.message)
 				continue
 				
 			albums = self.parser.extractAlbumsSearch(dom)
 			if len(albums) > 0:
 				progressbar.message("Found %d albums, adding them to match list" % len(albums))
-				foundalbums += albums
+				foundalbums.extend(albums)
 			else:
 				progressbar.message("Nothing found on what.cd")
+				
+			ratio =  float(i + 1) / float(len(advsearches))
+			progressbar.updateProgress(ratio)
 		
 		return foundalbums
 
+	def grabart(self, folder, album, progressbar, imagepreview):
+		try:
+			htmldetail = self.torrentdetails(album)
+			# Throttle HTML request throughput
+			time.sleep(5)
+		
+			detailpage = re.sub(' id="postpreview" ', ' ', htmldetail)
+			details = minidom.parseString(detailpage)
+			album.art = self.parser.locateAlbumArt(details)
+			
+			if not album.art.startswith('static/common/noartwork'):
+				imagepreview.changeImage(album.downloadAlbumArt(folder, progressbar.message))
+			else:
+				progressbar.message("what.cd has no artwork for %s: %s, please submit some" % (album.artist, album.title))
+		except (ExpatError):
+			progressbar.message("Parse error dealing with what's response, dumping debug")
+			self.parser.handleExpatError("Parse error grabbing album art for %s: %s" % (album.artist, album.title) \
+				, detailpage, re.sub(" ", "_", "art_%s_%s.html" % (album.artist, album.title)), progressbar.message)
+		except socket.error:
+			progressbar.message("socket error grabbing art, skipping %s: %s" % (album.artist, album.title))
+
+	# Expecting a list of (artist, album, folder) tuples for local foldernames and refs to GUI progress objects
+	def downloadImages(self, tuples, progressbar, imagepreview):
+		pos = 0
+		for artist, album, folder in tuples:
+			progressbar.message("Advanced search for %s: %s" % (artist, album))
+
+			try:
+				advresponse = self.advsearch(artist, album)
+				# Sleep after a search plz
+				time.sleep(10)
+				dom = minidom.parseString(advresponse)
+			except (ExpatError):
+				progressbar.message("Parse error dealing with what's response, dumping debug")
+				self.parser.handleExpatError("Parse error performing advanced search for %s: %s" % (artist, album) \
+					, advresponse, re.sub(" ", "_", "adv_%s_%s.html" % (artist, album)), progressbar.message)
+				continue
+			except socket.error:
+				progressbar.message("socket error performing advanced search, skipping %s: %s" % (artist.album))
+				continue
+			
+			albums = self.parser.extractAlbumsSearch(dom)
+
+			if len(albums) == 1:
+				progressbar.message("Found exactly one album, grabbing art")
+				self.grabart(folder, albums[0], progressbar, imagepreview)
+			elif len(albums) > 1:
+				progressbar.message("Ambigous result: found %d albums, skipping" % len(albums))
+			else:
+				progressbar.message("Nothing found for %s: %s" % (artist, album))
+			
+			ratio =  float(pos + 1) / float(len(tuples))
+			progressbar.updateProgress(ratio)
+			pos += 1
+
+	# Expecting a list of (artist, album, folder) tuples for local foldernames and refs to GUI progress objects
+	def fakeDownloadImages(self, tuples, progressbar, imagepreview):
+		pos = 0
+		testimages = ["testdata/1.jpg", "testdata/2.jpg", "testdata/3.jpg", "testdata/4.jpg", "testdata/5.jpg", "testdata/6.jpg"]
+		for artist, album, folder in tuples:
+			progressbar.message("Fake advanced search for %s - %s" % (artist, album))
+
+			time.sleep(3)
+			progressbar.message("Found exactly one album, grabbing art")
+			imagepreview.changeImage(testimages[pos % len(testimages)])
+			
+			ratio =  float(pos + 1) / float(len(tuples))
+			progressbar.updateProgress(ratio)		
+			pos += 1
+			
 class Collage:
 	albums = list()
 	def __str__(self):
@@ -199,10 +281,11 @@ class Album(WhatBase):
 		return sorted(self.formats, key=lambda x:(int(x.rank(config)), 0 - x.bytes()))[0]
 
 	# Download album art
-	def downloadAlbumArt(self, folder):
-		print "Downloading %s to folder %s" % (self.art, folder)
+	def downloadAlbumArt(self, folder, messagecallback = None):
+		self.debugMessage("Downloading %s to folder %s" % (self.art, folder), messagecallback)
 		fname = "folder." + self.art.split('.').pop()
-		self.downloadResource(self.art, folder, fname)
+		self.downloadResource(self.art, folder, fname, messagecallback)
+		return folder + "/" + fname
  
 class Format(WhatBase):
 	NO_MATCH_RANK = 1000000
@@ -378,19 +461,19 @@ class Parser(WhatBase):
 
 		return albums
 
-	def handleExpatError(self, description, response, debugfile):
-		print description
-		traceback.print_exc()
+	def handleExpatError(self, description, response, debugfile, messagecallback = None):
+		self.debugMessage(description, messagecallback)
+		self.debugMessage(traceback.format_exc(), messagecallback)
 		
 		# Dump the search response for debug purposes
 		try:
-			print "Creating HTML dump for debug in file %s" % debugfile
+			self.debugMessage("Creating HTML dump for debug in file %s" % debugfile, messagecallback)
 			dumpfile = open(debugfile, "w")
 			dumpfile.write(response)
 			dumpfile.close()
 		except (IOError):
-			print "IO Error creating debug file"
-			traceback.print_exc()
+			self.debugMessage("IO Error creating debug file", messagecallback)
+			self.debugMessage(traceback.format_exc(), messagecallback)
 			
 	def getUserStats(self, dom):
 		userStats = {}
@@ -412,26 +495,6 @@ class Parser(WhatBase):
 					userStats[id] = val
 					
 		return userStats
-
-class DownloadStats:
-	def __init__(self):
-		self.downloaded = list()
-	
-	def addTorrent(self, format):
-		self.downloaded.append(format)
-		
-	def printStats(self):
-		print "Downloaded a total of %d torrents with the following potential cost" % len(self.downloaded)
-		statsmap = {}
-		for torrent in self.downloaded:
-			key = torrent.format, torrent.isfree()
-			if key in statsmap:
-				statsmap[key] = ( statsmap[key][0] + torrent.bytes(), statsmap[key][1] + 1 )
-			else:
-				statsmap[key] = ( torrent.bytes(), 1 )
-				
-		for k in statsmap.keys():
-			print "%d %s %s torrents for a total size of %.1fM" % (statsmap[k][1], k[1], k[0], statsmap[k][0] / 1048576.0)
 			
 if __name__ == "__main__":
 	print "Module to manage what.cd as a web service"
