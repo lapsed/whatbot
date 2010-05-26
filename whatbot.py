@@ -106,7 +106,7 @@ class WhatBotGui(Tk):
 			tkMessageBox.showwarning("Validation failed", str(v))
 			
 	def about(self):
-		tkMessageBox.showinfo("lapsed's WhatBot", "Brought to you in association with what.cd\n...move along\n\nVersion 0.3 alpha")
+		tkMessageBox.showinfo("lapsed's WhatBot", "Brought to you in association with what.cd\n...move along\n\nVersion 0.31 alpha")
 				
 	def jumpBackToStart(self):
 		self.remoteresults.destroy()

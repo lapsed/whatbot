@@ -42,15 +42,16 @@ class WhatBase:
 
 	def bytesFromString(self, sizestr):
 		size = sizestr.split(" ")
+		mag = str(size[0]).translate(None, ',')
 		
 		if size[1] == "KB":
-			return float(size[0]) * 1024
+			return float(mag) * 1024
 		elif size[1] == "MB":
-			return float(size[0]) * 1024 * 1024
+			return float(mag) * 1024 * 1024
 		elif size[1] == "GB":
-			return float(size[0]) * 1024 * 1024 * 1024
+			return float(mag) * 1024 * 1024 * 1024
 		elif size[1] == "TB":
-			return float(size[0]) * 1024 * 1024 * 1024 * 1024
+			return float(mag) * 1024 * 1024 * 1024 * 1024
 		else:
 			return 0
 		
