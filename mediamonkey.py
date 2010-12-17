@@ -16,6 +16,7 @@ select v.albumartist, v.album, s.extension, v.bitrate from
   from songs
   where extension in (%s) -- Change this if you want to filter by different formats
   and albumartist != '' and album != ''
+  and genre not in ('Comedy', 'Audiobooks')
   group by albumartist, album 
   having count(*) > 3 -- "Albums" with less than this number of tracks will be skipped
 ) v, songs s
@@ -65,10 +66,7 @@ order by f.id"""
 		return cmp(s1.lower(), s2.lower())
 		
 	def connected(self):
-		if self.conn:
-			return True
-		else:
-			return False
+		return self.conn and True or False
 		
 	def testConnection(self, dbfile = None):
 		if not dbfile:

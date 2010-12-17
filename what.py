@@ -59,10 +59,11 @@ class WhatBase:
 class WhatCD(WhatBase):
 	_login = "/login.php"
 
-	def __init__(self, config):
+	def __init__(self, config, mm):
 		# This singleton class owns the singleton parser
 		self.parser = Parser()
 		self.config = config
+		self.mm = mm
 		
 		# We are not logged in if there is no cookie here
 		self.headers = None
@@ -103,11 +104,7 @@ class WhatCD(WhatBase):
 		return rb
 
 	def login(self):
-		headers = self.request("GET", self._login, "", {}).headers
-		cookie=dict(headers)['set-cookie']
-		web_session=re.search("web_session=[a-f0-9]+", cookie).group(0)
-		headers = { "Cookie": web_session, "Content-Type": "application/x-www-form-urlencoded"}
-
+		headers = { "Content-Type": "application/x-www-form-urlencoded"}
 		loginform= {'username': self.config.get("what", "username"), 'password': self.config.get("what", "password") \
 			, 'keeplogged': '1', 'login': 'Login'}
 		data = urllib.urlencode(loginform)
@@ -116,9 +113,11 @@ class WhatCD(WhatBase):
 		try:
 			cookie=dict(headers)['set-cookie']
 			session=re.search("session=[^;]+", cookie).group(0)
-			self.headers = { "Cookie": web_session + "; " + session }
+			self.headers = { "Cookie": session }
 			
 			homepage = re.sub('value="Vote">', 'value="Vote"/>', self.request("GET", "/index.php", "", self.headers).body)
+			homepage = re.sub("forums\.php\?action=viewthread\&threadid=[0-9]+", "dummy.php", homepage)
+			homepage = re.sub("user\.php\?action=search\&search=[a-z0-9A-Z]+", "dummy.php", homepage)
 			self.userstats = self.parser.getUserStats(minidom.parseString(re.sub("<a href=blog.php>Latest blog posts</a>", "", homepage)))
 		except (KeyError, AttributeError):
 			# Login failed, most likely bad creds or the site is down, nothing to do
@@ -128,10 +127,7 @@ class WhatCD(WhatBase):
 		return self.headers
 		
 	def loggedIn(self):
-		if headers:
-			return True
-		else:
-			return False
+		return self.headers and True or False
 	
 	def getCollage(self, collageid):
 		return self.request("GET", "/collages.php?id=" + str(collageid), "", self.headers).body
@@ -145,6 +141,31 @@ class WhatCD(WhatBase):
 		searchform = {'action': 'advanced', 'artistname': artist, 'groupname': album, 'tags_type': '1', 'order_by': 'time', 'order_way': 'desc' }
 		data = urllib.urlencode(searchform)
 		return self.request("GET", "/torrents.php?" + data, "", self.headers).body
+
+	def snatched(self, progressbar):
+		# more bugs on what, this time an unterminated table tag.  Or terminated and not opened if there is nothing found ><
+		nodata = re.compile('<div class="center">\s+Nothing found!\s+</div>', re.MULTILINE + re.DOTALL)
+		badtable = re.compile('<table class="cat_list">.+?</table>', re.MULTILINE + re.DOTALL)
+	
+		snatched = []
+		page = 1
+		while True:
+			progressbar.message("Grabbing snatched page %s" % (page,))
+			html = self.snatchedPage(page)
+			if nodata.search(html):
+				break
+	
+			dom = minidom.parseString(badtable.sub("", html))
+			snatched += self.parser.extractAlbumsSnatched(dom)
+			progressbar.message("Added %s snatched albums, now sleeping..." % (len(snatched),))
+			page += 1
+			
+			# Sleep for five seconds, it's only polite
+			time.sleep(5)
+		return snatched
+		
+	def snatchedPage(self, page):
+		return self.request("GET", "/torrents.php?page=%s&type=snatched&userid=%s" % (page, self.userstats["user_id"]), "", self.headers).body
 
 	def torrentdetails(self, album):
 		return self.request("GET", "/" + album.torrent, "", self.headers).body
@@ -214,10 +235,35 @@ class WhatCD(WhatBase):
 		except socket.error:
 			progressbar.message("socket error grabbing art, skipping %s: %s" % (album.artist, album.title))
 
+	# strip extraneous junk like CD1, disc 1 and so on out of an album name
+	def unmangle(self, album):
+		nobrackets = re.compile("\(.+?\)")
+		nocd = re.compile("CD\s*[0-9]", re.IGNORECASE)
+		nodisc = re.compile("disc\s*[0-9]", re.IGNORECASE)
+		trailcrap = re.compile("[^\w]+$")
+		
+		return trailcrap.sub("", nocd.sub("", nodisc.sub("", nobrackets.sub("", album))))
+			
+	# Compare user's snatch list to what mediamonkey thinks is missing and snag the art
+	def downloadSnatchedArt(self, snatched, progressbar, imagepreview):
+		missingalbums = self.mm.missingArt()
+		
+		for i, missingalbum in enumerate(missingalbums):
+			artist, album = missingalbum[0], self.unmangle(missingalbum[1])
+			for snatch in filter(lambda x:x.artist.upper() == artist.upper() and x.title.upper() == album.upper(), snatched):
+				progressbar.message("Found torrent in snatched for %s - %s" % (artist, album))
+				folder = self.mm.fullpath(missingalbum[2])
+				progressbar.message("Downloading album art from %s to %s" % (snatch.torrent, folder))
+				self.grabart(folder, snatch, progressbar, imagepreview)
+			
+		ratio =  float(i + 1) / float(len(missingalbums))
+		progressbar.updateProgress(ratio)	
+	
 	# Expecting a list of (artist, album, folder) tuples for local foldernames and refs to GUI progress objects
 	def downloadImages(self, tuples, progressbar, imagepreview):
 		pos = 0
-		for artist, album, folder in tuples:
+		for artist, mangledalbum, folder in tuples:
+			album = self.unmangle(mangledalbum)
 			progressbar.message("Advanced search for %s: %s" % (artist, album))
 
 			try:
@@ -264,7 +310,7 @@ class WhatCD(WhatBase):
 			pos += 1
 			
 class Collage:
-	albums = list()
+	albums = []
 	def __str__(self):
 		return str(self.id) + ": " + self.name + " - " + str(len(self.albums)) + " recordings"
 
@@ -310,16 +356,10 @@ class Format(WhatBase):
 		return rank
 		
 	def isscene(self):
-		if self.scene:
-			return "Scene"
-		else:
-			return "User"
+		return self.scene and "Scene" or "User"
 
 	def isfree(self):
-		if self.freeleech:
-			return "Free"
-		else:
-			return "Not free"
+		return self.freeleech and "Free" or "Not free"
 
 	def bytes(self):
 		return self.bytesFromString(self.size)
@@ -357,20 +397,21 @@ class Parser(WhatBase):
 				return node.getElementsByTagName("img")[0].getAttribute("src")
 	
 	def extractAlbums(self, dom):
+		albums = []
 		for node in dom.getElementsByTagNameNS(self._XHTML_NS, 'table'):
 			if node.getAttribute("class") == "torrent_table":
 				albums = self.parseTorrentTable(node)
 		return albums
 
 	def extractAlbumsSearch(self, dom):
+		albums = []
 		for node in dom.getElementsByTagNameNS(self._XHTML_NS, 'table'):
-			albums = list()
 			if node.getAttribute("id") == "torrent_table":
 				albums = self.parseTorrentTableSearch(node)
 		return albums
 
 	def parseTorrentTable(self, torrent_table):
-		albums = list()
+		albums = []
 		rows = torrent_table.getElementsByTagName("tr")
 
 		for row in rows:
@@ -395,6 +436,53 @@ class Parser(WhatBase):
 					format.seeds = self.getText(cells[3].childNodes)
 
 					album.formats.append(format)
+		return albums
+		
+	def extractAlbumsSnatched(self, dom):
+		albums = []
+		for table in dom.getElementsByTagNameNS(self._XHTML_NS, 'table'):
+			if table.getAttribute("width") == "100%":
+				for row in table.getElementsByTagName("tr")[1:]:
+					# we're only dealing with music torrents for the time being...
+					classname = row.getElementsByTagName("div")[0].getAttribute("class").split(" ")[0]
+					if classname != "cats_music":
+						continue
+					
+					album = Album()
+					# default to Various Artists as no link exists for compilations
+					album.artist = "Various Artists"
+
+					cells = row.getElementsByTagName("td")
+					torrent, sizecell, seedcell = cells[1], cells[3], cells[5]
+					
+					for i, n in enumerate(torrent.childNodes):
+						if n.nodeType == n.TEXT_NODE:
+							year = re.search("\[[0-9]{4}\]", n.data)
+							if year:
+								album.year = year.group(0).strip("[]")
+								format = Format()
+								format.edition = "Original Edition"
+								self.parseFormatItems(format, n.data.split(" - ")[1].strip().split(" / "))
+								format.size = sizecell.childNodes[0].data
+								format.seeds = seedcell.childNodes[0].data
+								album.formats = [format]
+								
+					for link in torrent.getElementsByTagName("a"):
+						url = link.getAttribute("href")
+						if re.match("artist.php", url):
+							album.artist = link.childNodes[0].data
+						elif re.match("torrents.php\?id=[0-9]+&torrentid=[0-9]+$", url):
+							album.title = link.childNodes[0].data
+							format.url = url
+							album.torrent = url.split("&")[0]
+					
+					try:
+						# Skip albums with no year in what's metadata
+						dummy = album.year
+						albums.append(album)
+					except (AttributeError):
+						self.debugMessage("Skipping %s - %s, please fix metadata on what" % (album.artist, album.title))
+							
 		return albums
 
 	def parseFormatItems(self, format, formatitems):
@@ -431,11 +519,11 @@ class Parser(WhatBase):
 				album.title = self.getText(lnode.childNodes)
 				album.torrent = lnode.getAttribute("href")
 
-		album.formats = list() 
+		album.formats = [] 
 		return album
 	
 	def parseTorrentTableSearch(self, torrent_table):
-		albums = list()
+		albums = []
 		rows = torrent_table.getElementsByTagName("tr")
 
 		for row in rows:
@@ -479,6 +567,13 @@ class Parser(WhatBase):
 	def getUserStats(self, dom):
 		userStats = {}
 		for node in dom.getElementsByTagNameNS(self._XHTML_NS, 'ul'):
+			# Pull the user's ID out to facilitate grabbing the user's data off the profile page
+			if node.getAttribute("id") == "userinfo_username":
+				for url in [ link.getAttribute("href") for link in node.getElementsByTagName("a")]:
+					if url.startswith("user.php?id="):
+						userStats["user_id"] = url.split("=")[1]
+						break
+				
 			if node.getAttribute("id") == "userinfo_stats":
 				for li in node.getElementsByTagName('li'):
 					id = li.getAttribute("id")

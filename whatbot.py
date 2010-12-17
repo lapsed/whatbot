@@ -1,7 +1,7 @@
 #!/usr/bin/python
 import pickle, sqlite3, time
 import tkMessageBox, tkFileDialog
-import mediamonkey, what
+import mediamonkey, what, whatdao
 
 from Tkinter import *
 from whatconfig import WhatConfigParser
@@ -29,6 +29,7 @@ class WhatBotGui(Tk):
 		menu.add_cascade(label="File", menu=filemenu)
 		filemenu.add_command(label="Saved Search...", command=self.loadRemoteSearch)
 		filemenu.add_command(label="Missing Art...", command=lambda: MissingArt(self, mm.missingArt()))
+		filemenu.add_command(label="My snatches...", command=lambda: Snatched(self), state=DISABLED)
 		filemenu.add_command(label="Options...", command=self.changeOptions)
 		filemenu.add_separator()
 		filemenu.add_command(label="Exit", command=exit)
@@ -106,7 +107,7 @@ class WhatBotGui(Tk):
 			tkMessageBox.showwarning("Validation failed", str(v))
 			
 	def about(self):
-		tkMessageBox.showinfo("lapsed's WhatBot", "Brought to you in association with what.cd\n...move along\n\nVersion 0.31 alpha")
+		tkMessageBox.showinfo("lapsed's WhatBot", "Brought to you in association with what.cd\n...move along\n\nVersion 0.4 alpha")
 				
 	def jumpBackToStart(self):
 		self.remoteresults.destroy()
@@ -154,6 +155,8 @@ class ScrollGridSelect(Frame):
 			newlb = Listbox(self, selectmode=MULTIPLE, yscrollcommand=self.yscroll, exportselection=0 \
 				, width=widths[index], selectborderwidth=0, highlightthickness=0, height=height)
 			
+			newlb.columnconfigure(0, weight=1)
+			
 			# Only bind the listbox if there is data to put in it
 			if len(data) > 0:
 				newlb.bind("<<ListboxSelect>>", self.select)
@@ -169,12 +172,14 @@ class ScrollGridSelect(Frame):
 	
 		for i in range(len(self.labels)):
 			self.labels[i].grid(row=0, column=i)
-			self.listboxes[i].grid(row=1, column=i)
+			self.listboxes[i].grid(row=1, column=i, sticky=N+S+E+W)
+			self.grid_columnconfigure(i, weight=widths[i])
 			
 		self.scrollbar.grid(row=1, column=len(self.labels), sticky=N+S)
 
 		allb.grid(row=2, column=0)
 		noneb.grid(row=2, column=1)
+		self.grid_rowconfigure(1, weight=1)
 
 	# Can call out whenever the select list changes if required
 	def changeSelection(self, nowselected):
@@ -310,6 +315,54 @@ class ImagePreview(Toplevel):
 			self.deiconify()
 		self.update_idletasks()
 		
+class Snatched(Toplevel):
+	def __init__(self, parent):
+		Toplevel.__init__(self)
+		self.parent = parent
+		self.snatched = dao.loadSnatched()
+		parent.withdraw()
+		self.title("My snatched albums")
+		
+		self.scrollframe = ScrollGridSelect(self, ("Artist", "Album"), (50, 50), 20, [ (snatch.artist, snatch.title) for snatch in self.snatched ])
+		backbutton = Button(self, text="Back", command=self.goBackToStart)
+		refreshbutton = Button(self, text="Refresh...", command=self.refreshSnatched)
+		artbutton = Button(self, text="Download Art...", command=self.downloadArt)
+		
+		self.scrollframe.grid(row=0, column=0, columnspan=3, sticky="NSEW")
+		backbutton.grid(row=1, column=0)
+		refreshbutton.grid(row=1, column=1)
+		artbutton.grid(row=1, column=2)
+		
+		self.protocol("WM_DELETE_WINDOW", self.goBackToStart)
+		self.grid_rowconfigure(0, weight=1)
+		self.grid_columnconfigure(0, weight=1)
+		
+	def goBackToStart(self):
+		self.destroy()
+		self.parent.deiconify()
+		
+	def refreshSnatched(self):
+		progressbar = RemoteProgress(self)
+		progressbar.updateProgress(0)
+		snatched = whatcd.snatched(progressbar)
+		dao.replaceSnatched(snatched)
+		
+		progressbar.close()
+	
+	def downloadArt(self):
+		progressbar = RemoteProgress(self)
+		progressbar.updateProgress(0)
+		preview_geometry = "+%d+%d" % (progressbar.winfo_rootx() + progressbar.winfo_width() + 50, self.parent.winfo_rooty())
+		imagepreview = ImagePreview(self, preview_geometry)
+
+		whatcd.downloadSnatchedArt(self.snatched, progressbar, imagepreview)
+		
+		tkMessageBox.showinfo("Downloaded art", "MediaMonkey library should be refreshed before a repeat run")
+		imagepreview.close()
+		progressbar.close()
+				
+				
+		
 class MissingArt(Toplevel):
 	def __init__(self, parent, tuples):
 		Toplevel.__init__(self)
@@ -322,7 +375,9 @@ class MissingArt(Toplevel):
 		backbutton = Button(self, text="Back", command=self.goBackToStart)
 		findbutton = Button(self, text="Find art...", command=self.findArt)
 		
-		self.scrollframe.grid(row=0, column=0, columnspan=2, sticky="EW")
+		self.scrollframe.grid(row=0, column=0, columnspan=2, sticky="NSEW")
+		self.grid_rowconfigure(0, weight=1)
+		self.grid_columnconfigure(0, weight=1)
 		backbutton.grid(row=1, column=0)
 		findbutton.grid(row=1, column=1)
 		
@@ -337,7 +392,7 @@ class MissingArt(Toplevel):
 			if len(self.scrollframe.selected) == 0:
 				raise ValueError("Please select something to search for")
 
-			progressbar = RemoteProgress(self)				
+			progressbar = RemoteProgress(self)
 			progressbar.updateProgress(0)
 			preview_geometry = "+%d+%d" % (progressbar.winfo_rootx() + progressbar.winfo_width() + 50, self.parent.winfo_rooty())
 			imagepreview = ImagePreview(self, preview_geometry)
@@ -363,7 +418,9 @@ class LocalSearchResults(Toplevel):
 		backbutton = Button(self, text="Back", command=self.goBackToStart)
 		replacebutton = Button(self, text="Replace releases...", command=self.replaceReleases)
 		
-		self.scrollframe.grid(row=0, column=0, columnspan=2, sticky="EW")
+		self.scrollframe.grid(row=0, column=0, columnspan=2, sticky="NSEW")
+		self.grid_rowconfigure(0, weight=1)
+		self.grid_columnconfigure(0, weight=1)
 		backbutton.grid(row=1, column=0)
 		replacebutton.grid(row=1, column=1)
 		
@@ -418,7 +475,9 @@ class RemoteSearchResults(Toplevel):
 		statframe = Frame(self)
 		butframe = Frame(self)
 		
-		self.scrollframe.grid(row=0, column=0)
+		self.scrollframe.grid(row=0, column=0, sticky="NSEW")
+		self.grid_rowconfigure(0, weight=1)
+		self.grid_columnconfigure(0, weight=1)		
 		statframe.grid(row=1, column=0)
 		butframe.grid(row=2, column=0)
 
@@ -668,7 +727,8 @@ if __name__ == "__main__":
 	config = WhatConfigParser()
 	config.read('whatbot.cfg')
 	mm = mediamonkey.MediaMonkey(config)
-	whatcd = what.WhatCD(config)
+	whatcd = what.WhatCD(config, mm)
+	dao = whatdao.WhatDAO()
 
 	# Create and start GUI
 	gui = WhatBotGui()
