@@ -107,7 +107,7 @@ class WhatBotGui(Tk):
 			tkMessageBox.showwarning("Validation failed", str(v))
 			
 	def about(self):
-		tkMessageBox.showinfo("lapsed's WhatBot", "Brought to you in association with what.cd\n...move along\n\nVersion 0.4 alpha")
+		tkMessageBox.showinfo("lapsed's WhatBot", "Brought to you in association with what.cd\n...move along\n\nVersion 0.5 alpha")
 				
 	def jumpBackToStart(self):
 		self.remoteresults.destroy()
@@ -271,6 +271,9 @@ class RemoteProgress(Toplevel):
 		self.update()
 		
 	def message(self, message):
+		f = open('whatbot.log', 'a')
+		f.write("%s\n" % message)
+		f.close
 		self.txt.config(state=NORMAL)
 		self.txt.insert(END, message + "\n")
 		self.txt.see(END)
@@ -465,9 +468,11 @@ class RemoteSearchResults(Toplevel):
 		widths = (20, 25, 5, 6, 10, 6, 8, 15, 8, 5, 10)
 		displaydata = []
 		for album in tuples:
-			best = album.bestFormatSize(config)
+			# The album bean knows all about what editions and formats are available so the sensible thing is to put the clever 
+			# scoring in there 
+			best = album.bestFormat(config)
 			display = (album.artist, album.title, album.year, best.format, best.bitrate \
-				, best.source, best.isscene(), best.edition, best.isfree(), best.seeds, best.size)
+				, best.edition.medium, best.isscene(), best.edition.strOriginal(), best.isfree(), best.seeds, best.size)
 			displaydata.append(display)
 		
 		# Three frames here
@@ -566,10 +571,11 @@ class RemoteSearchResults(Toplevel):
 			albums = [ self.remotetuples[int(i)] for i in self.scrollframe.selected ]
 			for i in range(len(albums)):
 				progressbar.message("Downloading torrent for %s: %s" % (albums[i].artist, albums[i].title))
-				albums[i].bestFormatSize(config).downloadTorrent(albums[i])
+				albums[i].bestFormat(config).downloadTorrent(albums[i])
 				progressbar.updateProgress(float(i + 1) / float(len(albums)))
-				progressbar.message("Sleeping for 10s to be polite")
-				time.sleep(10)
+				# TODO: bring the data in scope.  simply cannot be bothered!
+				progressbar.message("Sleeping for 2 seconds to be polite")
+				time.sleep(2)
 
 			progressbar.close()
 
@@ -577,7 +583,7 @@ class RemoteSearchResults(Toplevel):
 		totalbytes = 0
 		totalfreebytes = 0
 		for i in selected:
-			best = self.remotetuples[int(i)].bestFormatSize(config)
+			best = self.remotetuples[int(i)].bestFormat(config)
 			if best.freeleech:
 				totalfreebytes = totalfreebytes + best.bytes()
 			else:

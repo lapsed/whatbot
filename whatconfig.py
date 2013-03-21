@@ -4,14 +4,22 @@ from ConfigParser import SafeConfigParser
 from rankingselector import FormatRankingRule
 
 class WhatConfigParser(SafeConfigParser):
+	def sortedSection(self, section):
+		return sorted(self.items(section), key=lambda x:(int(x[0])))
+
 	# Transform between an ordered list of FormatRankingRule and the .cfg format
 	def loadRankings(self):
 		rankings=[]
-		# mmmm tasty
-		for format, bitrate in [ item[1].split("|") for item in sorted(self.items("format"), key=lambda x:(int(x[0]))) ]:
+		for format, bitrate in [ item[1].split("|") for item in self.sortedSection("format") ]:
 			rankings.append(FormatRankingRule(format, bitrate))
 			
 		return rankings
+		
+	def extraRankings(self):
+		mediumrankings = [item[1] for item in self.sortedSection("medium")]
+		editionrankings = [item[1] for item in self.sortedSection("ed`ition")]		
+		
+		return (mediumrankings, editionrankings)
 	
 	def saveRankings(self, rankings):
 		self.remove_section("format")
@@ -30,6 +38,6 @@ class WhatConfigParser(SafeConfigParser):
 			rules.append((format, bitrate, item[0]))
 		
 		return rules
-
+		
 if __name__ == "__main__":
 	print "Extended config parser for the WhatBot"
