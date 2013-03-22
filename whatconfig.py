@@ -15,12 +15,6 @@ class WhatConfigParser(SafeConfigParser):
 			
 		return rankings
 		
-	def extraRankings(self):
-		mediumrankings = [item[1] for item in self.sortedSection("medium")]
-		editionrankings = [item[1] for item in self.sortedSection("ed`ition")]		
-		
-		return (mediumrankings, editionrankings)
-	
 	def saveRankings(self, rankings):
 		self.remove_section("format")
 		self.add_section("format")
