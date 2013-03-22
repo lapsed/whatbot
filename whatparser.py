@@ -259,7 +259,8 @@ class Parser(WhatBase):
 
 					cells = row.find_all("td")
 					format.size = cells[3].get_text()
-					format.seeds = cells[5].get_text()
+					# Potentially need to strip commas out of the number of seeds
+					format.seeds = cells[5].get_text().replace(',','')
 					
 					# We are linking all the formats onto the editions and vice versa to make scoring and data retrieval 
 					# as simple as possible
