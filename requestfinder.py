@@ -53,10 +53,11 @@ class RequestFinder():
 						try:
 							page = whatcd.getTorrentGroup(torrent_group_id)
 							request.flac_present = parser.parseGroup(page)
-					except:
-						print "Error processing torrent ID %d, dumping source"
-						self.dump_page('torrent_details_%d.htm' % torrent_group_id)
-						continue
+						except:
+							print "Error processing torrent ID %d, dumping source"
+							self.dump_page('torrent_details_%d.htm' % torrent_group_id)
+							continue
+							
 					# store request details in local sql database
 					print "Storing request..."
 					dao.storeRequest(request)

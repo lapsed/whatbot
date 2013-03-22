@@ -12,7 +12,7 @@ class WhatBase:
 
 	def downloadResource(self, url, path, fname, messagecallback = None):
 		# Remove characters Windoze doesn't allow in filenames
-		fname = re.sub("[\*\"\/\\\[\]\:\;\|\=\,]", "", fname)
+		fname = re.sub("[\*\"\/\\\[\]\:\;\|\=\,\?]", "", fname)
 
 		try:
 			# Do an impression of Firefox to prevent 403 from some image hosts
