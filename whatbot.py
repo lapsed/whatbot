@@ -28,6 +28,7 @@ class WhatBotGui(Tk):
 		filemenu = Menu(menu, tearoff=0)
 		menu.add_cascade(label="File", menu=filemenu)
 		filemenu.add_command(label="Saved Search...", command=self.loadRemoteSearch)
+		filemenu.add_command(label="Load Shopping List...", command=self.loadShoppingList)
 		filemenu.add_command(label="Missing Art...", command=lambda: MissingArt(self, mm.missingArt()))
 		filemenu.add_command(label="My snatches...", command=lambda: Snatched(self), state=DISABLED)
 		filemenu.add_command(label="Options...", command=self.changeOptions)
@@ -121,6 +122,17 @@ class WhatBotGui(Tk):
 			savefile.close()
 			self.withdraw()
 			self.remoteresults = RemoteSearchResults(results, self.jumpBackToStart)
+			
+	def loadShoppingList(self):
+		listfilename = tkFileDialog.askopenfilename(parent=self)
+		if listfilename:
+			listfile = open(listfilename, "r")
+			lines = listfile.read().splitlines()
+			# need to create a list of tuples thus
+			# v.albumartist, v.album, s.extension, v.bitrate
+			shopping = [ tuple(line.split('|')) + ('Any', 'N/A') for line in lines if len(line.split('|')) == 2 ]
+			listfile.close()
+			LocalSearchResults(self, shopping)
 	
 	def login(self):
 		self.gobutton.config(state=DISABLED)
