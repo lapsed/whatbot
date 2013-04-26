@@ -6,6 +6,7 @@ import mediamonkey, what, whatdao
 from Tkinter import *
 from whatconfig import WhatConfigParser
 from rankingselector import *
+from sys import exit
 
 # PIL would be nice, but we can manage without
 try:
