@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import pickle, sqlite3, time
+import pickle, sqlite3, time, sys
 import tkMessageBox, tkFileDialog
 import mediamonkey, what, whatdao
 
@@ -742,6 +742,10 @@ class StatusBar(Frame):
 		self.label.update_idletasks()
 		
 if __name__ == "__main__":
+	# Filthy hack to set default encoding programmatically rather than using sitecustomize.py - required for py2exe
+	reload(sys)
+	sys.setdefaultencoding("utf-8")
+	
 	# Create and initialise singletons
 	config = WhatConfigParser()
 	config.read('whatbot.cfg')
